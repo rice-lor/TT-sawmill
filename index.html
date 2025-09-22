@@ -37,23 +37,42 @@
             cursor: move;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             user-select: none;
-            text-align: center;
-            font-size: 12px;
-            color: #bb86fc;
             display: flex;
             justify-content: space-between;
             align-items: center;
+        }
+        
+        .title-group {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
         }
 
         .header-bar h2 {
             margin: 0;
             font-size: 12px;
             font-weight: normal;
+            color: #bb86fc;
         }
         
         .version-tag {
             font-size: 11px;
             color: #888;
+        }
+
+        #refreshBtn {
+            background: none;
+            border: none;
+            color: #a0a0a0;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 0;
+            line-height: 1;
+            transition: color 0.2s, transform 0.2s;
+        }
+        #refreshBtn:hover {
+            color: #03dac6;
+            transform: rotate(90deg);
         }
 
         .status-content {
@@ -71,8 +90,11 @@
 <body>
     <div class="status-window" id="draggableWindow">
         <div class="header-bar" id="dragHandle">
-            <h2>Sawmill Automation</h2>
-            <span class="version-tag">v1.4</span>
+            <div class="title-group">
+                <h2>Sawmill Automation</h2>
+                <span class="version-tag">v1.5</span>
+            </div>
+            <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
         <div class="status-content">
             <span id="status-text">Initializing...</span>
@@ -109,12 +131,15 @@
         const statusText = document.getElementById('status-text');
         const draggableWindow = document.getElementById('draggableWindow');
         const dragHandle = document.getElementById('dragHandle');
+        const refreshBtn = document.getElementById('refreshBtn');
 
         // --- UI LOGIC ---
         let isDragging = false;
         let offsetX, offsetY;
 
         dragHandle.addEventListener('mousedown', (e) => {
+            // Prevent dragging when the refresh button is clicked
+            if (e.target === refreshBtn) return;
             isDragging = true;
             offsetX = e.clientX - draggableWindow.getBoundingClientRect().left;
             offsetY = e.clientY - draggableWindow.getBoundingClientRect().top;
@@ -132,6 +157,10 @@
                 isDragging = false;
                 draggableWindow.style.userSelect = 'auto';
             }
+        });
+
+        refreshBtn.addEventListener('click', () => {
+            window.location.reload();
         });
 
         // --- CORE AUTOMATION LOGIC ---
@@ -226,11 +255,11 @@
 
                 if (vehicleLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
-                    await waitUntil(() => cache.menu_choices.some(c => c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
                     await forceMenuChoice(ACTIONS.MOC_TRAILER);
                 } else if (inventoryLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.OPEN_STORAGE);
-                    await waitUntil(() => cache.menu_choices.some(c => c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
                     await forceMenuChoice(ACTIONS.PUT_ALL);
                 }
             } finally {
