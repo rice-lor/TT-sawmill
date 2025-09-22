@@ -72,7 +72,7 @@
     <div class="status-window" id="draggableWindow">
         <div class="header-bar" id="dragHandle">
             <h2>Sawmill Automation</h2>
-            <span class="version-tag">v1.2</span>
+            <span class="version-tag">v1.0</span>
         </div>
         <div class="status-content">
             <span id="status-text">Initializing...</span>
@@ -178,7 +178,9 @@
             const content = cache[storageKey];
             if (!content || content === "{}") return { tcargologs: { amount: 0 } };
             try {
-                const parsed = JSON.parse(content);
+                // Ensure content is a string before parsing
+                const contentString = typeof content === 'string' ? content : JSON.stringify(content);
+                const parsed = JSON.parse(contentString);
                 return parsed.tcargologs ? parsed : { tcargologs: { amount: 0 } };
             } catch (e) {
                 return { tcargologs: { amount: 0 } };
@@ -256,7 +258,6 @@
         }
 
         // --- EVENT LISTENERS ---
-
         window.addEventListener("message", (event) => {
             const data = event.data;
             if (!data || !data.data) return;
@@ -264,7 +265,22 @@
             const receivedData = data.data;
             
             for (const [key, value] of Object.entries(receivedData)) {
-                cache[key] = value;
+                // Special handling for menu_choices which might be a string or an array
+                if (key === 'menu_choices') {
+                    if (typeof value === 'string') {
+                        try {
+                            cache[key] = JSON.parse(value || "[]");
+                        } catch {
+                            cache[key] = [];
+                        }
+                    } else if (Array.isArray(value)) {
+                        cache[key] = value;
+                    } else {
+                        cache[key] = [];
+                    }
+                } else {
+                    cache[key] = value;
+                }
             }
             
             updateStatusDisplay();
