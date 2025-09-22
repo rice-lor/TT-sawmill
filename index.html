@@ -72,7 +72,7 @@
     <div class="status-window" id="draggableWindow">
         <div class="header-bar" id="dragHandle">
             <h2>Sawmill Automation</h2>
-            <span class="version-tag">v1.0</span>
+            <span class="version-tag">v1.4</span>
         </div>
         <div class="status-content">
             <span id="status-text">Initializing...</span>
@@ -200,10 +200,9 @@
                 const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
 
                 if (vehicleLogAmount < CONFIG.VEHICLE_LOG_CAPACITY) {
-                    postCommand("sendCommand", { command: "rm_trunk" });
-                    await sleep(500);
-                    await waitUntil(() => cache.menu === CONFIG.LOGGING_CAMP_MENU, 50, 100);
                     await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(500); // Wait for action to process
+                    postCommand("sendCommand", { command: "rm_trunk" });
                 } else if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
                     await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
                 }
