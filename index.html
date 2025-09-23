@@ -92,7 +92,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation</h2>
-                <span class="version-tag">v1.5</span>
+                <span class="version-tag">v1.8</span>
             </div>
             <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -110,7 +110,7 @@
             VEHICLE_MODEL: "trailerlarge",
             INVENTORY_LOG_CAPACITY: 5,
             VEHICLE_LOG_CAPACITY: 170,
-            DEBOUNCE_DELAY_MS: 3000
+            DEBOUNCE_DELAY_MS: 1500
         };
 
         const ACTIONS = {
@@ -121,11 +121,16 @@
             PUT_ALL: "Put All",
             MOC_TRAILER: "Mobile Operations Center (MK14) (trailerlarge)"
         };
+        
+        const NOTIFICATIONS = {
+            INVENTORY_FULL: "~r~Inventory full."
+        };
 
         // --- STATE & CACHE ---
         let cache = {};
         let lastActionTimestamp = 0;
         let isProcessing = false;
+        let lastActionFailedInventoryFull = false;
 
         // --- UI ELEMENTS ---
         const statusText = document.getElementById('status-text');
@@ -136,32 +141,25 @@
         // --- UI LOGIC ---
         let isDragging = false;
         let offsetX, offsetY;
-
         dragHandle.addEventListener('mousedown', (e) => {
-            // Prevent dragging when the refresh button is clicked
             if (e.target === refreshBtn) return;
             isDragging = true;
             offsetX = e.clientX - draggableWindow.getBoundingClientRect().left;
             offsetY = e.clientY - draggableWindow.getBoundingClientRect().top;
             draggableWindow.style.userSelect = 'none';
         });
-
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
             draggableWindow.style.left = `${e.clientX - offsetX}px`;
             draggableWindow.style.top = `${e.clientY - offsetY}px`;
         });
-
         document.addEventListener('mouseup', () => {
             if (isDragging) {
                 isDragging = false;
                 draggableWindow.style.userSelect = 'auto';
             }
         });
-
-        refreshBtn.addEventListener('click', () => {
-            window.location.reload();
-        });
+        refreshBtn.addEventListener('click', () => window.location.reload());
 
         // --- CORE AUTOMATION LOGIC ---
         function postCommand(type, data = {}) {
@@ -207,7 +205,6 @@
             const content = cache[storageKey];
             if (!content || content === "{}") return { tcargologs: { amount: 0 } };
             try {
-                // Ensure content is a string before parsing
                 const contentString = typeof content === 'string' ? content : JSON.stringify(content);
                 const parsed = JSON.parse(contentString);
                 return parsed.tcargologs ? parsed : { tcargologs: { amount: 0 } };
@@ -221,19 +218,17 @@
             isProcessing = true;
 
             try {
-                const userId = cache.user_id;
-                if (!userId) return;
-
-                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.VEHICLE_MODEL}`;
-                const vehicleLogAmount = (getStorageContent(vehicleStorageKey).tcargologs?.amount) || 0;
                 const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
-
-                if (vehicleLogAmount < CONFIG.VEHICLE_LOG_CAPACITY) {
+                
+                if (lastActionFailedInventoryFull) {
+                    lastActionFailedInventoryFull = false;
+                    if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
+                        await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
+                    }
+                } else {
                     await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
-                    await sleep(500); // Wait for action to process
+                    await sleep(500);
                     postCommand("sendCommand", { command: "rm_trunk" });
-                } else if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
-                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
                 }
             } finally {
                 isProcessing = false;
@@ -251,13 +246,21 @@
 
                 const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.VEHICLE_MODEL}`;
                 const vehicleLogAmount = (getStorageContent(vehicleStorageKey).tcargologs?.amount) || 0;
-                const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
+                let inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
 
                 if (vehicleLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
                     await forceMenuChoice(ACTIONS.MOC_TRAILER);
-                } else if (inventoryLogAmount > 0) {
+                    await sleep(500); // Wait for the menu to refresh
+                }
+
+                // Re-check inventory logs after potential dump
+                inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
+                
+                // Now, check if there are inventory logs to dump
+                if (inventoryLogAmount >= CONFIG.INVENTORY_LOG_CAPACITY) {
+                    await waitUntil(() => cache.menu_open && cache.menu_choices.some(c => c && c[0].includes(ACTIONS.OPEN_STORAGE)), 100, 10, "Sawmill menu did not reappear.");
                     await forceMenuChoice(ACTIONS.OPEN_STORAGE);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
                     await forceMenuChoice(ACTIONS.PUT_ALL);
@@ -278,7 +281,7 @@
              const vehicleLogAmount = (getStorageContent(vehicleStorageKey).tcargologs?.amount) || 0;
              const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
 
-             if (vehicleLogAmount > 0 || inventoryLogAmount > 0) {
+             if (vehicleLogAmount > 0 || inventoryLogAmount >= CONFIG.INVENTORY_LOG_CAPACITY) {
                  statusText.textContent = "Waiting for Storage Menu";
              } else {
                  statusText.textContent = "Waiting for Logs Menu";
@@ -293,14 +296,9 @@
             const receivedData = data.data;
             
             for (const [key, value] of Object.entries(receivedData)) {
-                // Special handling for menu_choices which might be a string or an array
                 if (key === 'menu_choices') {
                     if (typeof value === 'string') {
-                        try {
-                            cache[key] = JSON.parse(value || "[]");
-                        } catch {
-                            cache[key] = [];
-                        }
+                        try { cache[key] = JSON.parse(value || "[]"); } catch { cache[key] = []; }
                     } else if (Array.isArray(value)) {
                         cache[key] = value;
                     } else {
@@ -311,12 +309,18 @@
                 }
             }
             
+            if (receivedData.notification === NOTIFICATIONS.INVENTORY_FULL) {
+                lastActionFailedInventoryFull = true;
+            }
+            
             updateStatusDisplay();
             
-            if (cache.menu_open) {
-                if (cache.menu === CONFIG.LOGGING_CAMP_MENU) {
+            if (cache.menu_open && Array.isArray(cache.menu_choices)) {
+                const menuText = cache.menu_choices.map(c => c && c[0] ? c[0].replace(/(<.+?>)|(&#.+?;)/g, "").trim() : "").join(" ");
+                
+                if (menuText.includes("Collect Logs")) {
                     handleLoggingCamp();
-                } else if (cache.menu === CONFIG.SAWMILL_MENU) {
+                } else if (menuText.includes(ACTIONS.DUMP_FROM_TRUNK) || menuText.includes(ACTIONS.OPEN_STORAGE)) {
                     handleSawmill();
                 }
             }
