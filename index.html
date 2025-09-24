@@ -126,7 +126,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.6</span>
+                <span class="version-tag">v2.7</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -402,6 +402,7 @@
                     statusText.textContent = "Waiting for Storage Menu";
                 } else {
                     statusText.textContent = "Waiting for Logs Menu";
+                    fillStep = 'trailer'; // Reset the fill step when all logs are gone.
                 }
              }
 
