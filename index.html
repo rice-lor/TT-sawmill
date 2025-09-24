@@ -126,7 +126,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.3</span>
+                <span class="version-tag">v2.4</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -186,6 +186,26 @@
         const refreshBtn = document.getElementById('refreshBtn');
 
         // --- UI & WINDOW LOGIC ---
+        function loadWindowTransform() {
+            const pos = localStorage.getItem('sawmillWindow_pos');
+            const size = localStorage.getItem('sawmillWindow_size');
+            if (pos) {
+                const { top, left } = JSON.parse(pos);
+                draggableWindow.style.top = top;
+                draggableWindow.style.left = left;
+            }
+            if (size) {
+                const { width, height } = JSON.parse(size);
+                draggableWindow.style.width = width;
+                draggableWindow.style.height = height;
+            }
+        }
+
+        function saveWindowTransform() {
+            localStorage.setItem('sawmillWindow_pos', JSON.stringify({ top: draggableWindow.style.top, left: draggableWindow.style.left }));
+            localStorage.setItem('sawmillWindow_size', JSON.stringify({ width: draggableWindow.style.width, height: draggableWindow.style.height }));
+        }
+
         let isDragging = false;
         let offsetX, offsetY;
         dragHandle.addEventListener('mousedown', (e) => {
@@ -204,9 +224,17 @@
             if (isDragging) {
                 isDragging = false;
                 draggableWindow.style.userSelect = 'auto';
+                saveWindowTransform();
             }
         });
         refreshBtn.addEventListener('click', () => window.location.reload());
+        
+        const resizeObserver = new ResizeObserver(() => {
+           if (!isDragging) {
+              saveWindowTransform();
+           }
+        });
+        resizeObserver.observe(draggableWindow);
 
         // --- CORE AUTOMATION LOGIC ---
         function postCommand(type, data = {}) {
@@ -454,6 +482,7 @@
         });
 
         document.addEventListener("DOMContentLoaded", function() {
+            loadWindowTransform();
             postCommand("getData");
             updateUI();
 
