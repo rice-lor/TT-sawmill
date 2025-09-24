@@ -27,8 +27,8 @@
             left: 20px;
             width: 320px;
             min-width: 250px;
-            height: 240px;
-            min-height: 200px;
+            height: 220px; /* Adjusted height after removing progress bar */
+            min-height: 180px;
         }
 
         .header-bar {
@@ -86,56 +86,27 @@
         }
 
         #status-container {
-            padding: 6px;
+            padding: 8px;
             background-color: rgba(0,0,0,0.2);
             border-radius: 6px;
             text-align: center;
         }
 
         #status-text {
-            font-size: 15px;
+            font-size: 16px;
             font-weight: 500;
-        }
-
-        .progress-bar-container {
-            width: 100%;
-            background-color: #1a1a1a;
-            border-radius: 5px;
-            overflow: hidden;
-            border: 1px solid #444;
-            position: relative;
-            height: 22px;
-            flex-shrink: 0;
-        }
-
-        .progress-bar {
-            width: 0%;
-            height: 100%;
-            background: linear-gradient(90deg, #03dac6, #6200ee);
-            transition: width 0.3s ease-in-out;
-        }
-        
-        .progress-text {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 12px;
-            font-weight: bold;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
         }
 
         #item-list {
             list-style: none;
             padding: 0;
-            margin: 0;
-            font-size: 13px;
+            margin: 10px 0 0 0;
+            font-size: 14px;
         }
         #item-list li {
             display: flex;
             justify-content: space-between;
-            padding: 4px 2px;
+            padding: 5px 2px;
             border-bottom: 1px solid #333;
         }
         #item-list li:last-child {
@@ -155,17 +126,13 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v3.1</span>
+                <span class="version-tag">v2.3</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
         <div class="content-body">
             <div id="status-container">
                 <span id="status-text">Initializing...</span>
-            </div>
-            <div class="progress-bar-container">
-                <div class="progress-bar" id="storageProgressBar"></div>
-                <span class="progress-text" id="storageProgressText">Waiting for data...</span>
             </div>
              <ul id="item-list">
                 <!-- Items will be dynamically inserted here -->
@@ -213,8 +180,6 @@
 
         // --- UI ELEMENTS ---
         const statusText = document.getElementById('status-text');
-        const progressBar = document.getElementById('storageProgressBar');
-        const progressText = document.getElementById('storageProgressText');
         const itemList = document.getElementById('item-list');
         const draggableWindow = document.getElementById('automationWindow');
         const dragHandle = document.getElementById('dragHandle');
@@ -359,11 +324,18 @@
                     await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
                     await forceMenuChoice(ACTIONS.MOC_TRAILER);
-                } else if (hasMk15 && mk15LogAmount > 0) {
+                    await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after trailer dump.");
+                }
+
+                if (hasMk15 && getLogAmount(mk15StorageKey) > 0) {
                     await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.DUMP_MK15)), 100, 10);
                     await forceMenuChoice(ACTIONS.DUMP_MK15);
-                } else if (inventoryLogAmount > 0) {
+                    await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after MK15 dump.");
+                }
+                
+                inventoryLogAmount = getLogAmount('inventory');
+                if (inventoryLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.OPEN_STORAGE);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
                     await forceMenuChoice(ACTIONS.PUT_ALL);
@@ -396,20 +368,6 @@
                     statusText.textContent = "Waiting for Logs Menu";
                 }
              }
-
-            // Update Progress Bar (for self-storage only)
-            const trunkWeight = cache.trunkWeight;
-            const trunkCapacity = cache.trunkCapacity;
-            const selfStorageIdentifier = `chest_self_storage:${userId}:faq_${factionId}:chest`;
-            
-            if (cache.chest === selfStorageIdentifier && typeof trunkWeight === 'number' && typeof trunkCapacity === 'number' && trunkCapacity > 0) {
-                const percentage = (trunkWeight / trunkCapacity) * 100;
-                progressBar.style.width = `${Math.min(100, percentage)}%`;
-                progressText.textContent = `${trunkWeight.toLocaleString()} / ${trunkCapacity.toLocaleString()} kg`;
-            } else {
-                progressText.textContent = "Open Self-Storage";
-                progressBar.style.width = '0%';
-            }
 
             // Update Item List (for self-storage only)
             if (!userId || !factionId) {
