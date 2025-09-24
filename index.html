@@ -27,7 +27,7 @@
             left: 20px;
             width: 320px;
             min-width: 250px;
-            height: 220px; /* Adjusted height after removing progress bar */
+            height: 220px; 
             min-height: 180px;
         }
 
@@ -85,11 +85,19 @@
             gap: 12px;
         }
 
+        .settings-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
         #status-container {
             padding: 8px;
             background-color: rgba(0,0,0,0.2);
             border-radius: 6px;
             text-align: center;
+            flex-grow: 1;
         }
 
         #status-text {
@@ -97,10 +105,25 @@
             font-weight: 500;
         }
 
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            background-color: rgba(0,0,0,0.2);
+            padding: 6px 8px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        #dumping-toggle {
+             cursor: pointer;
+        }
+
+
         #item-list {
             list-style: none;
             padding: 0;
-            margin: 10px 0 0 0;
+            margin: 0;
             font-size: 14px;
         }
         #item-list li {
@@ -125,14 +148,20 @@
     <div class="movable-window" id="automationWindow">
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
-                <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.7</span>
+                <h2>Sawmill Automation</h2>
+                <span class="version-tag">v2.8</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
         <div class="content-body">
-            <div id="status-container">
-                <span id="status-text">Initializing...</span>
+            <div class="settings-row">
+                <div id="status-container">
+                    <span id="status-text">Initializing...</span>
+                </div>
+                <div class="toggle-switch">
+                    <label for="dumping-toggle">Auto Dump</label>
+                    <input type="checkbox" id="dumping-toggle">
+                </div>
             </div>
              <ul id="item-list">
                 <!-- Items will be dynamically inserted here -->
@@ -177,6 +206,7 @@
         let lastActionTimestamp = 0;
         let isProcessing = false;
         let fillStep = 'trailer'; // 'trailer', 'cab', or 'inventory'
+        let isDumpingEnabled = true;
 
         // --- UI ELEMENTS ---
         const statusText = document.getElementById('status-text');
@@ -184,6 +214,7 @@
         const draggableWindow = document.getElementById('automationWindow');
         const dragHandle = document.getElementById('dragHandle');
         const refreshBtn = document.getElementById('refreshBtn');
+        const dumpingToggle = document.getElementById('dumping-toggle');
 
         // --- UI & WINDOW LOGIC ---
         function loadWindowTransform() {
@@ -239,6 +270,11 @@
            }
         });
         resizeObserver.observe(draggableWindow);
+
+        dumpingToggle.addEventListener('change', () => {
+            isDumpingEnabled = dumpingToggle.checked;
+            localStorage.setItem('sawmillDumpingEnabled', isDumpingEnabled);
+        });
 
         // --- CORE AUTOMATION LOGIC ---
         function postCommand(type, data = {}) {
@@ -300,16 +336,23 @@
             if (isProcessing) return;
             isProcessing = true;
             
-            if (fillStep === 'trailer' && cache.cab === CONFIG.MK15_MODEL) {
-                fillStep = 'cab';
-                postCommand("sendCommand", { command: "rm_cabtrunk" });
-            } else {
-                fillStep = 'inventory';
-                postCommand("sendCommand", { command: "vrp-reopen" });
+            try {
+                if (fillStep === 'trailer' && cache.cab === CONFIG.MK15_MODEL) {
+                    fillStep = 'cab';
+                    postCommand("sendCommand", { command: "vrp-reopen" });
+                    await waitUntil(() => cache.menu === CONFIG.LOGGING_CAMP_MENU, 100, 50, "Logging camp menu did not reopen for MK15 fill.");
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(500);
+                    postCommand("sendCommand", { command: "rm_cabtrunk" });
+                } else {
+                    fillStep = 'inventory';
+                    postCommand("sendCommand", { command: "vrp-reopen" });
+                }
+            } catch(e) {
+                postCommand("notification", { text: `~r~[Sawmill]~w~ Error during fill step change: ${e.message}` });
+            } finally {
+                isProcessing = false;
             }
-            
-            await sleep(500);
-            isProcessing = false;
         }
 
         async function handleLoggingCamp() {
@@ -484,7 +527,7 @@
                 
                 if (menuText.includes("Collect Logs")) {
                     handleLoggingCamp();
-                } else if (menuText.includes(ACTIONS.DUMP_FROM_TRUNK) || menuText.includes(ACTIONS.OPEN_STORAGE)) {
+                } else if (isDumpingEnabled && (menuText.includes(ACTIONS.DUMP_FROM_TRUNK) || menuText.includes(ACTIONS.OPEN_STORAGE))) {
                     handleSawmill();
                 }
             }
@@ -492,6 +535,11 @@
 
         document.addEventListener("DOMContentLoaded", function() {
             loadWindowTransform();
+
+            const savedDumpingState = localStorage.getItem('sawmillDumpingEnabled');
+            isDumpingEnabled = savedDumpingState === null ? true : savedDumpingState === 'true';
+            dumpingToggle.checked = isDumpingEnabled;
+
             postCommand("getData");
             updateUI();
 
