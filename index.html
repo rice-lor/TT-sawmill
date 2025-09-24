@@ -155,7 +155,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v3.0</span>
+                <span class="version-tag">v3.1</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -397,24 +397,26 @@
                 }
              }
 
-            // Update Progress Bar (for main trailer only)
+            // Update Progress Bar (for self-storage only)
             const trunkWeight = cache.trunkWeight;
             const trunkCapacity = cache.trunkCapacity;
-            if (cache.chest && cache.chest.includes(CONFIG.MAIN_TRAILER_MODEL) && typeof trunkWeight === 'number' && typeof trunkCapacity === 'number' && trunkCapacity > 0) {
+            const selfStorageIdentifier = `chest_self_storage:${userId}:faq_${factionId}:chest`;
+            
+            if (cache.chest === selfStorageIdentifier && typeof trunkWeight === 'number' && typeof trunkCapacity === 'number' && trunkCapacity > 0) {
                 const percentage = (trunkWeight / trunkCapacity) * 100;
                 progressBar.style.width = `${Math.min(100, percentage)}%`;
                 progressText.textContent = `${trunkWeight.toLocaleString()} / ${trunkCapacity.toLocaleString()} kg`;
             } else {
-                progressText.textContent = "Open Trailer to See Capacity";
+                progressText.textContent = "Open Self-Storage";
                 progressBar.style.width = '0%';
             }
 
-            // Update Item List (for main trailer only)
-            if (!userId) {
-                itemList.innerHTML = `<li><span class="item-name">Waiting for User ID...</span></li>`;
+            // Update Item List (for self-storage only)
+            if (!userId || !factionId) {
+                itemList.innerHTML = `<li><span class="item-name">Waiting for User/Faction ID...</span></li>`;
                 return;
             }
-            const storageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+            const storageKey = `chest_self_storage:${userId}:faq_${factionId}:chest`;
             const storageContentRaw = cache[storageKey];
             
             itemList.innerHTML = '';
@@ -445,13 +447,13 @@
                          displayedItems++;
                     }
                     if (displayedItems === 0) {
-                         itemList.innerHTML = `<li><span class="item-name">Trailer is empty</span></li>`;
+                         itemList.innerHTML = `<li><span class="item-name">Self-Storage is empty</span></li>`;
                     }
                 } catch (e) {
-                     itemList.innerHTML = `<li><span class="item-name">Error parsing data</span></li>`;
+                     itemList.innerHTML = `<li><span class="item-name">Error parsing storage data</span></li>`;
                 }
             } else {
-                itemList.innerHTML = `<li><span class="item-name">Trailer data not loaded</span></li>`;
+                itemList.innerHTML = `<li><span class="item-name">Open Self-Storage to see items</span></li>`;
             }
         }
 
