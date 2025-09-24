@@ -126,7 +126,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.4</span>
+                <span class="version-tag">v2.6</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -190,14 +190,18 @@
             const pos = localStorage.getItem('sawmillWindow_pos');
             const size = localStorage.getItem('sawmillWindow_size');
             if (pos) {
-                const { top, left } = JSON.parse(pos);
-                draggableWindow.style.top = top;
-                draggableWindow.style.left = left;
+                try {
+                    const { top, left } = JSON.parse(pos);
+                    draggableWindow.style.top = top;
+                    draggableWindow.style.left = left;
+                } catch(e) { console.error("Could not parse window position"); }
             }
             if (size) {
-                const { width, height } = JSON.parse(size);
-                draggableWindow.style.width = width;
-                draggableWindow.style.height = height;
+                 try {
+                    const { width, height } = JSON.parse(size);
+                    draggableWindow.style.width = width;
+                    draggableWindow.style.height = height;
+                } catch(e) { console.error("Could not parse window size"); }
             }
         }
 
@@ -313,15 +317,18 @@
             isProcessing = true;
 
             try {
-                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const inventoryLogAmount = getLogAmount('inventory');
                 
                 if (fillStep === 'inventory') {
-                    const inventoryLogAmount = getLogAmount('inventory');
                     if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
                         await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
                     }
-                } else { // Start with trailer by default
-                    fillStep = 'trailer';
+                } else if (fillStep === 'cab') {
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(500);
+                    postCommand("sendCommand", { command: "rm_cabtrunk" });
+                }
+                else { // fillStep === 'trailer'
                     await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
                     await sleep(500);
                     postCommand("sendCommand", { command: "rm_trunk" });
@@ -371,6 +378,7 @@
             } finally {
                 isProcessing = false;
                 lastActionTimestamp = Date.now();
+                fillStep = 'trailer'; // Reset fill step after any dump action.
             }
         }
 
