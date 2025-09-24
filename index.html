@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Sawmill Status</title>
+    <title>Sawmill Automation & Status</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -13,22 +13,22 @@
             overflow: hidden;
         }
 
-        .status-window {
+        .movable-window {
             position: fixed;
-            top: 20px;
-            left: 20px;
-            width: 280px;
-            min-width: 200px;
-            height: 70px;
-            min-height: 60px;
-            background-color: rgba(30, 30, 30, 0.9);
-            border-radius: 8px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            background-color: rgba(30, 30, 30, 0.95);
+            border-radius: 10px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.6);
             border: 1px solid rgba(255, 255, 255, 0.1);
             resize: both;
-            overflow: hidden;
+            overflow: hidden; 
             display: flex;
             flex-direction: column;
+            top: 20px;
+            left: 20px;
+            width: 320px;
+            min-width: 250px;
+            height: 240px;
+            min-height: 200px;
         }
 
         .header-bar {
@@ -59,7 +59,7 @@
             font-size: 11px;
             color: #888;
         }
-
+        
         #refreshBtn {
             background: none;
             border: none;
@@ -74,30 +74,102 @@
             color: #03dac6;
             transform: rotate(90deg);
         }
-
-        .status-content {
+        
+        .content-body {
+            padding: 10px 15px;
             flex-grow: 1;
+            overflow-y: auto; 
+            overflow-x: hidden; 
             display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 10px;
-            font-size: 16px;
-            font-weight: 500;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        #status-container {
+            padding: 6px;
+            background-color: rgba(0,0,0,0.2);
+            border-radius: 6px;
             text-align: center;
+        }
+
+        #status-text {
+            font-size: 15px;
+            font-weight: 500;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            background-color: #1a1a1a;
+            border-radius: 5px;
+            overflow: hidden;
+            border: 1px solid #444;
+            position: relative;
+            height: 22px;
+            flex-shrink: 0;
+        }
+
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, #03dac6, #6200ee);
+            transition: width 0.3s ease-in-out;
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
+        }
+
+        #item-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 13px;
+        }
+        #item-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 2px;
+            border-bottom: 1px solid #333;
+        }
+        #item-list li:last-child {
+            border-bottom: none;
+        }
+        #item-list .item-name {
+            color: #ccc;
+        }
+        #item-list .item-amount {
+            color: #03dac6;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
-    <div class="status-window" id="draggableWindow">
+    <div class="movable-window" id="automationWindow">
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
-                <h2>Sawmill Automation</h2>
-                <span class="version-tag">v1.8</span>
+                <h2>Sawmill Automation & Status</h2>
+                <span class="version-tag">v3.0</span>
             </div>
-            <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
+             <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
-        <div class="status-content">
-            <span id="status-text">Initializing...</span>
+        <div class="content-body">
+            <div id="status-container">
+                <span id="status-text">Initializing...</span>
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="storageProgressBar"></div>
+                <span class="progress-text" id="storageProgressText">Waiting for data...</span>
+            </div>
+             <ul id="item-list">
+                <!-- Items will be dynamically inserted here -->
+            </ul>
         </div>
     </div>
 
@@ -107,9 +179,9 @@
         const CONFIG = {
             LOGGING_CAMP_MENU: "Trucking: Logging Camp",
             SAWMILL_MENU: "The Sawmill Faction",
-            VEHICLE_MODEL: "trailerlarge",
+            MAIN_TRAILER_MODEL: "trailerlarge",
+            MK15_MODEL: "mk15",
             INVENTORY_LOG_CAPACITY: 5,
-            VEHICLE_LOG_CAPACITY: 170,
             DEBOUNCE_DELAY_MS: 1500
         };
 
@@ -119,30 +191,40 @@
             DUMP_FROM_TRUNK: "Dump from Trunk",
             OPEN_STORAGE: "Open Storage",
             PUT_ALL: "Put All",
-            MOC_TRAILER: "Mobile Operations Center (MK14) (trailerlarge)"
+            MOC_TRAILER: "Mobile Operations Center (MK14) (trailerlarge)",
+            DUMP_MK15: "Chernobog Toter (mk15)"
         };
         
         const NOTIFICATIONS = {
             INVENTORY_FULL: "~r~Inventory full."
         };
 
+        const itemMap = {
+            "tcargodust": "Sawdust",
+            "tcargologs": "Logs",
+            "refined_planks": "Planks"
+        };
+        
         // --- STATE & CACHE ---
         let cache = {};
         let lastActionTimestamp = 0;
         let isProcessing = false;
-        let lastActionFailedInventoryFull = false;
+        let fillStep = 'trailer'; // 'trailer', 'cab', or 'inventory'
 
         // --- UI ELEMENTS ---
         const statusText = document.getElementById('status-text');
-        const draggableWindow = document.getElementById('draggableWindow');
+        const progressBar = document.getElementById('storageProgressBar');
+        const progressText = document.getElementById('storageProgressText');
+        const itemList = document.getElementById('item-list');
+        const draggableWindow = document.getElementById('automationWindow');
         const dragHandle = document.getElementById('dragHandle');
         const refreshBtn = document.getElementById('refreshBtn');
 
-        // --- UI LOGIC ---
+        // --- UI & WINDOW LOGIC ---
         let isDragging = false;
         let offsetX, offsetY;
         dragHandle.addEventListener('mousedown', (e) => {
-            if (e.target === refreshBtn) return;
+             if (e.target === refreshBtn) return;
             isDragging = true;
             offsetX = e.clientX - draggableWindow.getBoundingClientRect().left;
             offsetY = e.clientY - draggableWindow.getBoundingClientRect().top;
@@ -212,20 +294,41 @@
                 return { tcargologs: { amount: 0 } };
             }
         }
+        
+        function getLogAmount(storageKey) {
+             return (getStorageContent(storageKey).tcargologs?.amount) || 0;
+        }
+
+        async function handleInventoryFull() {
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            if (fillStep === 'trailer' && cache.cab === CONFIG.MK15_MODEL) {
+                fillStep = 'cab';
+                postCommand("sendCommand", { command: "rm_cabtrunk" });
+            } else {
+                fillStep = 'inventory';
+                postCommand("sendCommand", { command: "vrp-reopen" });
+            }
+            
+            await sleep(500);
+            isProcessing = false;
+        }
 
         async function handleLoggingCamp() {
             if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
             isProcessing = true;
 
             try {
-                const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
                 
-                if (lastActionFailedInventoryFull) {
-                    lastActionFailedInventoryFull = false;
+                if (fillStep === 'inventory') {
+                    const inventoryLogAmount = getLogAmount('inventory');
                     if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
                         await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
                     }
-                } else {
+                } else { // Start with trailer by default
+                    fillStep = 'trailer';
                     await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
                     await sleep(500);
                     postCommand("sendCommand", { command: "rm_trunk" });
@@ -244,23 +347,23 @@
                 const userId = cache.user_id;
                 if (!userId) return;
 
-                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.VEHICLE_MODEL}`;
-                const vehicleLogAmount = (getStorageContent(vehicleStorageKey).tcargologs?.amount) || 0;
-                let inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+                const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+
+                const vehicleLogAmount = getLogAmount(vehicleStorageKey);
+                const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
+                let inventoryLogAmount = getLogAmount('inventory');
 
                 if (vehicleLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
                     await forceMenuChoice(ACTIONS.MOC_TRAILER);
-                    await sleep(500); // Wait for the menu to refresh
-                }
-
-                // Re-check inventory logs after potential dump
-                inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
-                
-                // Now, check if there are inventory logs to dump
-                if (inventoryLogAmount >= CONFIG.INVENTORY_LOG_CAPACITY) {
-                    await waitUntil(() => cache.menu_open && cache.menu_choices.some(c => c && c[0].includes(ACTIONS.OPEN_STORAGE)), 100, 10, "Sawmill menu did not reappear.");
+                } else if (hasMk15 && mk15LogAmount > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.DUMP_MK15)), 100, 10);
+                    await forceMenuChoice(ACTIONS.DUMP_MK15);
+                } else if (inventoryLogAmount > 0) {
                     await forceMenuChoice(ACTIONS.OPEN_STORAGE);
                     await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
                     await forceMenuChoice(ACTIONS.PUT_ALL);
@@ -271,21 +374,85 @@
             }
         }
 
-        function updateStatusDisplay() {
+        function updateUI() {
              const userId = cache.user_id;
+             const factionId = cache.faction_id;
+
+             // Update Status Text
              if (!userId) {
                 statusText.textContent = "Waiting for User ID...";
-                return;
-             }
-             const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.VEHICLE_MODEL}`;
-             const vehicleLogAmount = (getStorageContent(vehicleStorageKey).tcargologs?.amount) || 0;
-             const inventoryLogAmount = (getStorageContent('inventory').tcargologs?.amount) || 0;
-
-             if (vehicleLogAmount > 0 || inventoryLogAmount >= CONFIG.INVENTORY_LOG_CAPACITY) {
-                 statusText.textContent = "Waiting for Storage Menu";
              } else {
-                 statusText.textContent = "Waiting for Logs Menu";
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+                const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+                
+                const vehicleLogAmount = getLogAmount(vehicleStorageKey);
+                const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
+                const inventoryLogAmount = getLogAmount('inventory');
+
+                if (vehicleLogAmount > 0 || mk15LogAmount > 0 || inventoryLogAmount > 0) {
+                    statusText.textContent = "Waiting for Storage Menu";
+                } else {
+                    statusText.textContent = "Waiting for Logs Menu";
+                }
              }
+
+            // Update Progress Bar (for main trailer only)
+            const trunkWeight = cache.trunkWeight;
+            const trunkCapacity = cache.trunkCapacity;
+            if (cache.chest && cache.chest.includes(CONFIG.MAIN_TRAILER_MODEL) && typeof trunkWeight === 'number' && typeof trunkCapacity === 'number' && trunkCapacity > 0) {
+                const percentage = (trunkWeight / trunkCapacity) * 100;
+                progressBar.style.width = `${Math.min(100, percentage)}%`;
+                progressText.textContent = `${trunkWeight.toLocaleString()} / ${trunkCapacity.toLocaleString()} kg`;
+            } else {
+                progressText.textContent = "Open Trailer to See Capacity";
+                progressBar.style.width = '0%';
+            }
+
+            // Update Item List (for main trailer only)
+            if (!userId) {
+                itemList.innerHTML = `<li><span class="item-name">Waiting for User ID...</span></li>`;
+                return;
+            }
+            const storageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+            const storageContentRaw = cache[storageKey];
+            
+            itemList.innerHTML = '';
+            
+            if (storageContentRaw) {
+                try {
+                    const storageContent = JSON.parse(storageContentRaw);
+                    let othersAmount = 0;
+                    let displayedItems = 0;
+                    
+                    for (const key in itemMap) {
+                        if (storageContent[key]) {
+                            const li = document.createElement('li');
+                            li.innerHTML = `<span class="item-name">${itemMap[key]}</span><span class="item-amount">${storageContent[key].amount.toLocaleString()}</span>`;
+                            itemList.appendChild(li);
+                            displayedItems++;
+                        }
+                    }
+                    for (const key in storageContent) {
+                        if (!itemMap[key]) {
+                            othersAmount += storageContent[key].amount;
+                        }
+                    }
+                    if (othersAmount > 0) {
+                         const li = document.createElement('li');
+                         li.innerHTML = `<span class="item-name">Others</span><span class="item-amount">${othersAmount.toLocaleString()}</span>`;
+                         itemList.appendChild(li);
+                         displayedItems++;
+                    }
+                    if (displayedItems === 0) {
+                         itemList.innerHTML = `<li><span class="item-name">Trailer is empty</span></li>`;
+                    }
+                } catch (e) {
+                     itemList.innerHTML = `<li><span class="item-name">Error parsing data</span></li>`;
+                }
+            } else {
+                itemList.innerHTML = `<li><span class="item-name">Trailer data not loaded</span></li>`;
+            }
         }
 
         // --- EVENT LISTENERS ---
@@ -310,10 +477,10 @@
             }
             
             if (receivedData.notification === NOTIFICATIONS.INVENTORY_FULL) {
-                lastActionFailedInventoryFull = true;
+                handleInventoryFull();
             }
             
-            updateStatusDisplay();
+            updateUI();
             
             if (cache.menu_open && Array.isArray(cache.menu_choices)) {
                 const menuText = cache.menu_choices.map(c => c && c[0] ? c[0].replace(/(<.+?>)|(&#.+?;)/g, "").trim() : "").join(" ");
@@ -328,7 +495,7 @@
 
         document.addEventListener("DOMContentLoaded", function() {
             postCommand("getData");
-            updateStatusDisplay();
+            updateUI();
 
             const escapeListener = (e) => {
                 if (e.key === "Escape") {
