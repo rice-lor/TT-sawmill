@@ -160,7 +160,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.9.1</span>
+                <span class="version-tag">v2.9.2</span>
             </div>
              <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
         </div>
@@ -337,7 +337,7 @@
         async function handleSawmillLogs() { /* ... unchanged, renamed from handleSawmill ... */ }
 
         async function takePlanks(target, vehicleName, amount) {
-            const action = target === 'inventory' ? ACTIONS.OPEN_STORAGE : ACTIONS.TAKE_TO_TRUNK;
+            const action = target === 'inventory' ? ACTIONS.TAKE : ACTIONS.TAKE_TO_TRUNK;
             await forceMenuChoice(action);
 
             if(target !== 'inventory') {
