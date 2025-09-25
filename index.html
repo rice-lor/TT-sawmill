@@ -314,7 +314,7 @@
 
         async function forceSubmitValue(value) {
             postCommand("forceSubmitValue", { value: String(value) });
-            await sleep(100); // Give time for the value to be processed
+            await sleep(100);
             postCommand("forceRequestResult", { result: "F5" });
         }
 
@@ -331,10 +331,91 @@
         function getLogAmount(storageKey) { return (getStorageContent(storageKey).tcargologs?.amount) || 0; }
         function getPlankAmount(storageKey) { return (getStorageContent(storageKey).refined_planks?.amount) || 0; }
         
-        // --- AUTOMATION SEQUENCES ---
-        async function handleInventoryFull() { /* ... unchanged ... */ }
-        async function handleLoggingCamp() { /* ... unchanged ... */ }
-        async function handleSawmillLogs() { /* ... unchanged, renamed from handleSawmill ... */ }
+        async function handleInventoryFull() {
+            if (isProcessing) return;
+            isProcessing = true;
+            
+            if (fillStep === 'trailer' && cache.cab === CONFIG.MK15_MODEL) {
+                fillStep = 'cab';
+                postCommand("sendCommand", { command: "rm_cabtrunk" });
+            } else {
+                fillStep = 'inventory';
+                postCommand("sendCommand", { command: "vrp-reopen" });
+            }
+            
+            await sleep(500);
+            isProcessing = false;
+        }
+
+        async function handleLoggingCamp() {
+            if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
+            isProcessing = true;
+
+            try {
+                const inventoryLogAmount = getLogAmount('inventory');
+                
+                if (fillStep === 'inventory') {
+                    if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
+                        await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
+                    }
+                } else if (fillStep === 'cab') {
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(500);
+                    postCommand("sendCommand", { command: "rm_cabtrunk" });
+                }
+                else { // fillStep === 'trailer'
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(500);
+                    postCommand("sendCommand", { command: "rm_trunk" });
+                }
+            } finally {
+                isProcessing = false;
+                lastActionTimestamp = Date.now();
+            }
+        }
+
+        async function handleSawmillLogs() {
+            if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
+            isProcessing = true;
+
+            try {
+                const userId = cache.user_id;
+                if (!userId) return;
+
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+                const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+
+                const vehicleLogAmount = getLogAmount(vehicleStorageKey);
+                const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
+                let inventoryLogAmount = getLogAmount('inventory');
+
+                if (vehicleLogAmount > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
+                    await forceMenuChoice(ACTIONS.MOC_TRAILER);
+                    await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after trailer dump.");
+                }
+
+                if (hasMk15 && getLogAmount(mk15StorageKey) > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.DUMP_MK15)), 100, 10);
+                    await forceMenuChoice(ACTIONS.DUMP_MK15);
+                     await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after MK15 dump.");
+                }
+                
+                inventoryLogAmount = getLogAmount('inventory');
+                if (inventoryLogAmount > 0) {
+                    await forceMenuChoice(ACTIONS.OPEN_STORAGE);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
+                    await forceMenuChoice(ACTIONS.PUT_ALL);
+                }
+            } finally {
+                isProcessing = false;
+                lastActionTimestamp = Date.now();
+                fillStep = 'trailer'; // Reset fill step after any dump action.
+            }
+        }
 
         async function takePlanks(target, vehicleName, amount) {
             const action = target === 'inventory' ? ACTIONS.TAKE : ACTIONS.TAKE_TO_TRUNK;
@@ -411,23 +492,17 @@
             }
         }
 
-
         function updateUI() {
              const userId = cache.user_id;
              const factionId = cache.faction_id;
-
-             // Update Status Text
-             if (!userId) {
-                statusText.textContent = "Waiting for User ID...";
-             } else {
+             if (!userId) { statusText.textContent = "Waiting for User ID..."; } 
+             else {
                 const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
                 const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
                 const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
-                
                 const vehicleLogAmount = getLogAmount(vehicleStorageKey);
                 const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
                 const inventoryLogAmount = getLogAmount('inventory');
-
                 if (vehicleLogAmount > 0 || mk15LogAmount > 0 || inventoryLogAmount > 0) {
                     statusText.textContent = "Waiting for Storage Menu";
                 } else {
@@ -436,19 +511,14 @@
                 }
              }
 
-            // Update Self-Storage Item List
-            if (!userId || !factionId) {
-                itemList.innerHTML = `<li><span class="item-name">Waiting for User/Faction ID...</span></li>`;
-            } else {
+            if (!userId || !factionId) { itemList.innerHTML = `<li><span class="item-name">Waiting for User/Faction ID...</span></li>`; } 
+            else {
                 const storageKey = `chest_self_storage:${userId}:faq_${factionId}:chest`;
                 const storageContent = getStorageContent(storageKey);
-                
                 itemList.innerHTML = '';
-                
                 if (Object.keys(storageContent).length > 0) {
                     let othersAmount = 0;
                     let displayedItems = 0;
-                    
                     for (const key in itemMap) {
                         if (storageContent[key]) {
                             const li = document.createElement('li');
@@ -458,9 +528,7 @@
                         }
                     }
                     for (const key in storageContent) {
-                        if (!itemMap[key]) {
-                            othersAmount += storageContent[key].amount;
-                        }
+                        if (!itemMap[key]) { othersAmount += storageContent[key].amount; }
                     }
                     if (othersAmount > 0) {
                          const li = document.createElement('li');
@@ -475,7 +543,6 @@
                 }
             }
 
-            // Update Inventory Item List
             const inventoryContent = getStorageContent('inventory');
             inventoryList.innerHTML = '';
             const storageCardAmount = inventoryContent.storage_card?.amount;
@@ -486,7 +553,6 @@
             } else {
                  inventoryList.innerHTML = `<li><span class="item-name">No Storage Cards</span></li>`;
             }
-
         }
 
         // --- EVENT LISTENERS ---
@@ -500,19 +566,11 @@
                 if (key === 'menu_choices') {
                     if (typeof value === 'string') {
                         try { cache[key] = JSON.parse(value || "[]"); } catch { cache[key] = []; }
-                    } else if (Array.isArray(value)) {
-                        cache[key] = value;
-                    } else {
-                        cache[key] = [];
-                    }
-                } else {
-                    cache[key] = value;
-                }
+                    } else if (Array.isArray(value)) { cache[key] = value; } else { cache[key] = []; }
+                } else { cache[key] = value; }
             }
             
-            if (receivedData.notification === NOTIFICATIONS.INVENTORY_FULL) {
-                handleInventoryFull();
-            }
+            if (receivedData.notification === NOTIFICATIONS.INVENTORY_FULL) { handleInventoryFull(); }
             
             updateUI();
             
@@ -521,8 +579,8 @@
                 
                 if (isLogsAutoEnabled && menuText.includes("Collect Logs")) {
                     handleLoggingCamp();
-                } else if (isLogsAutoEnabled && (menuText.includes(ACTIONS.DUMP_FROM_TRUNK) || menuText.includes(ACTIONS.OPEN_STORAGE))) {
-                    handleSawmill();
+                } else if (isLogsAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU) {
+                    handleSawmillLogs();
                 } else if (isTyAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU) {
                     handleTyAutoTakePlanks();
                 } else if (isTyAutoEnabled && cache.menu === CONFIG.TRAIN_NETWORK_MENU) {
