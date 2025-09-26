@@ -19,16 +19,15 @@
             border-radius: 10px;
             box-shadow: 0 8px 25px rgba(0,0,0,0.6);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            resize: both;
-            overflow: hidden; 
+            /* `resize` and `overflow` removed to allow tooltip to display correctly */
             display: flex;
             flex-direction: column;
             top: 20px;
             left: 20px;
             width: 320px;
             min-width: 250px;
-            height: 250px; 
-            min-height: 220px;
+            height: 260px; 
+            min-height: 230px;
         }
 
         .header-bar {
@@ -60,6 +59,63 @@
             color: #888;
         }
         
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .help-icon {
+            position: relative;
+            display: inline-block;
+            cursor: help;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background-color: #888;
+            color: #1e1e1e;
+            text-align: center;
+            line-height: 16px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .tooltip {
+            visibility: hidden;
+            width: 220px;
+            background-color: #555;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 8px;
+            position: absolute;
+            z-index: 10;
+            bottom: 150%; 
+            left: 50%;
+            margin-left: -110px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .tooltip::after {
+            content: "";
+            position: absolute;
+            top: 100%; 
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #555 transparent transparent transparent;
+        }
+
+        .help-icon:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
         #refreshBtn {
             background: none;
             border: none;
@@ -84,12 +140,15 @@
             flex-direction: column;
             gap: 10px;
         }
-
-        .settings-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
+        
+        .resize-handle {
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 15px;
+            height: 15px;
+            cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 0%, transparent 50%, #555 50%, #555 75%, transparent 75%, transparent 100%);
         }
 
         #status-container {
@@ -103,6 +162,13 @@
         #status-text {
             font-size: 16px;
             font-weight: 500;
+        }
+        
+        .faction-notice {
+            font-size: 11px;
+            text-align: center;
+            color: #a0a0a0;
+            margin: -5px 0 0 0;
         }
 
         .toggle-switch {
@@ -160,9 +226,17 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.9.2</span>
+                <span class="version-tag">v2.9.7</span>
             </div>
-             <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
+            <div class="header-controls">
+                <div class="help-icon">?
+                    <div class="tooltip">
+                        This was created by Rice for the convinience of producing planks.<br>
+                        If you found any bugs or errors please contact me via discord rice9999
+                    </div>
+                </div>
+                <button id="refreshBtn" title="Refresh Page">&#x21bb;</button>
+            </div>
         </div>
         <div class="content-body">
             <div class="settings-row">
@@ -180,11 +254,13 @@
                     </div>
                 </div>
             </div>
+            <p class="faction-notice">This app can only be used in The Sawmill Faction</p>
             <div class="list-header">Self-Storage</div>
             <ul id="item-list"></ul>
             <div class="list-header">Inventory</div>
             <ul id="inventory-list"></ul>
         </div>
+         <div class="resize-handle" id="resizeHandle"></div>
     </div>
 
     <script>
@@ -197,7 +273,7 @@
             MAIN_TRAILER_MODEL: "trailerlarge",
             MK15_MODEL: "mk15",
             INVENTORY_LOG_CAPACITY: 5,
-            DEBOUNCE_DELAY_MS: 1500
+            DEBOUNCE_DELAY_MS: 100
         };
 
         const ACTIONS = {
@@ -239,6 +315,7 @@
         const refreshBtn = document.getElementById('refreshBtn');
         const logsAutoToggle = document.getElementById('logs-auto-toggle');
         const tyAutoToggle = document.getElementById('ty-auto-toggle');
+        const resizeHandle = document.getElementById('resizeHandle');
 
         // --- UI & WINDOW LOGIC ---
         function loadWindowTransform() {
@@ -254,31 +331,47 @@
         }
 
         let isDragging = false;
-        let offsetX, offsetY;
+        let isResizing = false;
+        let offsetX, offsetY, startWidth, startHeight, startMouseX, startMouseY;
+        
         dragHandle.addEventListener('mousedown', (e) => {
-             if (e.target === refreshBtn) return;
+             if (e.target === refreshBtn || e.target.closest('.help-icon')) return;
             isDragging = true;
             offsetX = e.clientX - draggableWindow.getBoundingClientRect().left;
             offsetY = e.clientY - draggableWindow.getBoundingClientRect().top;
             draggableWindow.style.userSelect = 'none';
         });
+
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startWidth = draggableWindow.offsetWidth;
+            startHeight = draggableWindow.offsetHeight;
+            startMouseX = e.clientX;
+            startMouseY = e.clientY;
+            e.preventDefault();
+        });
+
         document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            draggableWindow.style.left = `${e.clientX - offsetX}px`;
-            draggableWindow.style.top = `${e.clientY - offsetY}px`;
+            if (isDragging) {
+                draggableWindow.style.left = `${e.clientX - offsetX}px`;
+                draggableWindow.style.top = `${e.clientY - offsetY}px`;
+            } else if (isResizing) {
+                const newWidth = startWidth + (e.clientX - startMouseX);
+                const newHeight = startHeight + (e.clientY - startMouseY);
+                draggableWindow.style.width = `${newWidth}px`;
+                draggableWindow.style.height = `${newHeight}px`;
+            }
         });
         document.addEventListener('mouseup', () => {
-            if (isDragging) {
+            if (isDragging || isResizing) {
                 isDragging = false;
+                isResizing = false;
                 draggableWindow.style.userSelect = 'auto';
                 saveWindowTransform();
             }
         });
         refreshBtn.addEventListener('click', () => window.location.reload());
         
-        const resizeObserver = new ResizeObserver(() => { if (!isDragging) { saveWindowTransform(); } });
-        resizeObserver.observe(draggableWindow);
-
         logsAutoToggle.addEventListener('change', () => {
             isLogsAutoEnabled = logsAutoToggle.checked;
             localStorage.setItem('sawmillLogsAutoEnabled', isLogsAutoEnabled);
@@ -431,24 +524,24 @@
 
             await waitUntil(() => cache.prompt === true && cache.prompt_title?.startsWith("Amount to take"), 100, 10);
             await forceSubmitValue(amount);
-            await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Menu did not return to Sawmill.");
         }
 
         async function handleTyAutoTakePlanks() {
             if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
             isProcessing = true;
             try {
-                if (tyTakeStep === 'trailer') {
-                    await takePlanks('trailer', ACTIONS.MOC_TRAILER, 690);
-                    tyTakeStep = cache.cab === CONFIG.MK15_MODEL ? 'cab' : 'inventory';
-                }
-                if (tyTakeStep === 'cab') {
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                
+                await takePlanks('trailer', ACTIONS.MOC_TRAILER, 690);
+                await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Menu did not return to Sawmill after trailer fill.");
+
+                if (hasMk15) {
                      await takePlanks('cab', ACTIONS.DUMP_MK15, 460);
-                     tyTakeStep = 'inventory';
+                     await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Menu did not return to Sawmill after cab fill.");
                 }
-                if (tyTakeStep === 'inventory') {
-                    await takePlanks('inventory', null, 20);
-                }
+                
+                await takePlanks('inventory', null, 20);
+
             } finally {
                 isProcessing = false;
                 lastActionTimestamp = Date.now();
@@ -579,10 +672,10 @@
                 
                 if (isLogsAutoEnabled && menuText.includes("Collect Logs")) {
                     handleLoggingCamp();
-                } else if (isLogsAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU) {
-                    handleSawmillLogs();
                 } else if (isTyAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU) {
                     handleTyAutoTakePlanks();
+                } else if (isLogsAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU) {
+                     handleSawmillLogs();
                 } else if (isTyAutoEnabled && cache.menu === CONFIG.TRAIN_NETWORK_MENU) {
                     handleTyAutoDumpPlanks();
                 }
