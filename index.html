@@ -226,7 +226,7 @@
         <div class="header-bar" id="dragHandle">
             <div class="title-group">
                 <h2>Sawmill Automation & Status</h2>
-                <span class="version-tag">v2.9.7</span>
+                <span class="version-tag">v2.9.8</span>
             </div>
             <div class="header-controls">
                 <div class="help-icon">?
@@ -273,7 +273,7 @@
             MAIN_TRAILER_MODEL: "trailerlarge",
             MK15_MODEL: "mk15",
             INVENTORY_LOG_CAPACITY: 5,
-            DEBOUNCE_DELAY_MS: 100
+            DEBOUNCE_DELAY_MS: 1500
         };
 
         const ACTIONS = {
@@ -302,7 +302,6 @@
         let lastActionTimestamp = 0;
         let isProcessing = false;
         let fillStep = 'trailer'; 
-        let tyTakeStep = 'trailer';
         let isLogsAutoEnabled = true;
         let isTyAutoEnabled = false;
 
@@ -542,6 +541,8 @@
                 
                 await takePlanks('inventory', null, 20);
 
+            } catch (error) {
+                postCommand("notification", { text: `~r~[TY Auto]~w~ Error: ${error.message}` });
             } finally {
                 isProcessing = false;
                 lastActionTimestamp = Date.now();
@@ -581,7 +582,6 @@
             } finally {
                 isProcessing = false;
                 lastActionTimestamp = Date.now();
-                tyTakeStep = 'trailer'; // Reset plan
             }
         }
 
