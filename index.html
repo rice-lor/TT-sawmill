@@ -465,9 +465,9 @@
                             <i class="bi bi-question-circle"></i>
                         </button>
                         <div class="dropdown-menu dropdown-menu-dark p-3" style="max-width: 300px;">
-                            <h6 class="dropdown-header">Sawmill Automation v3.0.2</h6>
+                            <h6 class="dropdown-header">Sawmill Automation v3.0.3</h6>
                             <p class="small mb-2">Created by Rice for convenient plank production.</p>
-                            <p class="small mb-2">This app was fixed by 🐹 Hamz.</p> <!-- Credit added here -->
+                            <p class="small mb-2">This app was fixed by 🐹 Hamz.</p>
                             <p class="small mb-0">Contact: discord @rice9999 for bugs or suggestions.</p>
                         </div>
                     </div>
@@ -509,7 +509,7 @@
                     </h6>
                     <div class="goal-controls">
                         <label for="goal-input" class="form-label small mb-0">Planks:</label>
-                        <input type="number" id="goal-input" min="0" max="10000" class="goal-input">
+                        <input type="text" id="goal-input" placeholder="e.g. 1k, 2500" class="goal-input">
                         <span class="goal-progress" id="goal-progress">0/0</span>
                         <small class="text-muted ms-2" id="logs-needed">(0 logs needed)</small>
                         <button id="reset-btn" class="btn btn-sm btn-outline-danger">
@@ -569,9 +569,11 @@
             MK15_MODEL: "mk15",
             INVENTORY_LOG_CAPACITY: 25,
             VEHICLE_LOG_CAPACITY: 60,
-            DEBOUNCE_DELAY_MS: 100,
+            DEBOUNCE_DELAY_MS: 1500,
+            LOGS_PER_PLANK: 1,
+            SAWDUST_PER_PLANK: 2,
             LOGS_PER_PLANK_BATCH: 5,
-            SAWDUST_PER_PLANK_BATCH: 0,
+            SAWDUST_PER_PLANK_BATCH: 10,
             PLANKS_PER_BATCH: 5
         };
 
@@ -610,6 +612,8 @@
         let totalPlanksProduced = 0;
         let goalMet = false;
         let isPlankAutoEnabled = false;
+        let lastTrunkFullNotification = 0;
+        let plankAutoStorageOpened = false;
 
         const itemListContainer = document.getElementById('item-list-container');
         const inventoryListContainer = document.getElementById('inventory-list-container');
@@ -752,7 +756,7 @@
                 container.classList.add('dragging');
 
                 window.addEventListener('mousemove', onMouseMove, { passive: false });
-                window.addEventListener('mouseup',   onMouseUp,   { once: true });
+                window.addEventListener('mouseup',  onMouseUp,   { once: true });
 
                 e.preventDefault();
                 e.stopPropagation();
@@ -881,12 +885,17 @@
         plankAutoToggle.addEventListener('change', () => {
             isPlankAutoEnabled = plankAutoToggle.checked;
             localStorage.setItem('sawmillPlankAutoEnabled', isPlankAutoEnabled);
+            plankAutoStorageOpened = false;
             updateGoalDisplay();
         });
         goalInput.addEventListener('change', () => {
-            plankGoal = parseInt(goalInput.value) || 0;
+            const inputValue = goalInput.value;
+            plankGoal = parseGoalValue(inputValue);
+            
+            goalInput.value = formatGoalDisplay(plankGoal);
+            
             localStorage.setItem('sawmillPlankGoal', plankGoal);
-            const logsNeeded = plankGoal * CONFIG.LOGS_PER_PLANK_BATCH;
+            const logsNeeded = plankGoal * CONFIG.LOGS_PER_PLANK;
             document.getElementById('logs-needed').textContent = `(${logsNeeded} logs needed)`;
             if (plankGoal > 0 && totalPlanksProduced >= plankGoal && !goalMet) {
                 goalMet = true;
@@ -909,6 +918,32 @@
             );
         });
 
+
+        function parseGoalValue(input) {
+            if (!input || typeof input !== 'string') return 0;
+            
+            const cleanInput = input.trim().toLowerCase();
+            if (cleanInput === '') return 0;
+            
+            if (cleanInput.endsWith('k')) {
+                const numberPart = cleanInput.slice(0, -1);
+                const parsed = parseFloat(numberPart);
+                return isNaN(parsed) ? 0 : Math.floor(parsed * 1000);
+            }
+            
+            const parsed = parseInt(cleanInput);
+            return isNaN(parsed) ? 0 : Math.max(0, parsed);
+        }
+        
+        function formatGoalDisplay(value) {
+            if (value >= 1000 && value % 1000 === 0) {
+                return (value / 1000) + 'k';
+            } else if (value >= 1000) {
+                const kValue = value / 1000;
+                return kValue % 1 === 0 ? kValue + 'k' : kValue.toFixed(1) + 'k';
+            }
+            return value.toString();
+        }
 
         function postCommand(type, data = {}) { window.parent.postMessage({ type, ...data }, "*"); }
         function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
@@ -1011,6 +1046,276 @@
             }
         }
 
+        async function handleSawmillLogs() {
+            if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
+            isProcessing = true;
+
+            try {
+                const userId = cache.user_id;
+                if (!userId) return;
+
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+                const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+
+                const vehicleLogAmount = getLogAmount(vehicleStorageKey);
+                const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
+                let inventoryLogAmount = getLogAmount('inventory');
+
+                if (vehicleLogAmount > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
+                    await forceMenuChoice(ACTIONS.MOC_TRAILER);
+                    await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after trailer dump.");
+                }
+
+                if (hasMk15 && getLogAmount(mk15StorageKey) > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.DUMP_MK15)), 100, 10);
+                    await forceMenuChoice(ACTIONS.DUMP_MK15);
+                     await waitUntil(() => cache.menu === CONFIG.SAWMILL_MENU, 100, 10, "Sawmill menu did not reappear after MK15 dump.");
+                }
+                
+                inventoryLogAmount = getLogAmount('inventory');
+                if (inventoryLogAmount > 0) {
+                    await forceMenuChoice(ACTIONS.OPEN_STORAGE);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
+                    await forceMenuChoice(ACTIONS.PUT_ALL);
+                }
+            } finally {
+                isProcessing = false;
+                lastActionTimestamp = Date.now();
+                fillStep = 'trailer';
+            }
+        }
+
+        async function takePlanks(target, vehicleName, amount) {
+            console.log(`[TY Auto] Taking max planks to ${target || vehicleName}`);
+            
+            if (target === 'inventory') {
+                await forceMenuChoice(ACTIONS.OPEN_STORAGE);
+                await forceMenuChoice(ACTIONS.TAKE);
+                await forceMenuChoice(ACTIONS.PLANKS);
+                postCommand("forceSubmitValue", { value: String(amount) });
+            } else {
+                await forceMenuChoice(ACTIONS.TAKE_TO_TRUNK);
+                await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(vehicleName)), 50, 20, `Vehicle menu did not appear for ${vehicleName}`);
+                await forceMenuChoice(vehicleName);
+                await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PLANKS)), 50, 20, "Planks option did not appear");
+                await forceMenuChoiceWithMod(ACTIONS.PLANKS, -1);
+                await sleep(500);
+            }
+        }
+
+        async function handleTyAutoTakePlanks() {
+            if (isProcessing || isTyAutoWaitingForMk15) {
+                console.log("[TY Auto] Skipping - already processing or waiting for MK15");
+                return;
+            }
+            
+            if (Date.now() - lastActionTimestamp < 500) {
+                console.log("[TY Auto] Skipping - debounce active");
+                return;
+            }
+            
+            const userId = cache.user_id;
+            const factionId = cache.faction_id;
+            if (!userId || !factionId) {
+                console.log("[TY Auto] Missing user_id or faction_id");
+                return;
+            }
+            
+            const storageKey = `chest_self_storage:${userId}:faq_${factionId}:chest`;
+            const storageContent = getStorageContent(storageKey);
+            const availablePlanks = storageContent.refined_planks?.amount || 0;
+            
+            if (availablePlanks === 0) {
+                console.log("[TY Auto] No planks available in storage");
+                return;
+            }
+            
+            const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+            const trailerStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+            const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+            
+            const currentTrailerPlanks = getPlankAmount(trailerStorageKey);
+            const currentMk15Planks = hasMk15 ? getPlankAmount(mk15StorageKey) : 0;
+            
+            const trailerCapacity = 690;
+            const mk15Capacity = 460;
+            
+            const trailerFull = currentTrailerPlanks >= trailerCapacity;
+            const mk15Full = hasMk15 && currentMk15Planks >= mk15Capacity;
+            
+            console.log(`[TY Auto] Trunk status - Trailer: ${currentTrailerPlanks}/${trailerCapacity}, MK15: ${currentMk15Planks}/${mk15Capacity}`);
+            
+            if (trailerFull && (mk15Full || !hasMk15)) {
+                console.log("[TY Auto] All available trunks are full");
+                
+                const now = Date.now();
+                if (now - lastTrunkFullNotification > 10000) {
+                    lastTrunkFullNotification = now;
+                    if (hasMk15) {
+                        postCommand("notification", { text: "~o~[TY Auto]~w~ Both MK14 trailer (690) and MK15 cab (460) are full! Take them to a TY." });
+                    } else {
+                        postCommand("notification", { text: "~o~[TY Auto]~w~ MK14 trailer is full (690 planks)! Take it to a TY." });
+                    }
+                }
+                return;
+            }
+            
+            console.log(`[TY Auto] Starting with ${availablePlanks} planks available`);
+            isProcessing = true;
+            try {
+                if (!trailerFull) {
+                    const planksNeededForTrailer = trailerCapacity - currentTrailerPlanks;
+                    console.log(`[TY Auto] Loading trailer... (needs ${planksNeededForTrailer} more planks)`);
+                    await takePlanks('trailer', ACTIONS.MOC_TRAILER, planksNeededForTrailer);
+                    
+                    console.log("[TY Auto] Waiting for menu to stabilize after trailer loading...");
+                    await sleep(1000);
+                    
+                    if (cache.menu !== CONFIG.SAWMILL_MENU) {
+                        console.log(`[TY Auto] Not in Sawmill menu (currently: ${cache.menu}), attempting to return...`);
+                        if (cache.menu && cache.menu !== CONFIG.SAWMILL_MENU) {
+                            postCommand("forceMenuBack");
+                            await sleep(500);
+                        }
+                    }
+                } else {
+                    console.log("[TY Auto] Trailer already full, skipping trailer loading");
+                }
+
+                if (hasMk15 && !mk15Full) {
+                    isTyAutoWaitingForMk15 = true;
+                    console.log("[TY Auto] MK15 detected - waiting for cab trunk to be opened...");
+                    postCommand("notification", { text: "~o~[TY Auto]~w~ MK15 detected - open cab trunk within 5 seconds..." });
+                    
+                    try {
+                        await waitUntil(() => 
+                            cache.menu === CONFIG.SAWMILL_MENU && 
+                            cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.TAKE_TO_TRUNK)),
+                            100, 50, "Take to Trunk option not detected within 5 seconds"
+                        );
+                        
+                        const storageContentCheck = getStorageContent(storageKey);
+                        const remainingPlanks = storageContentCheck.refined_planks?.amount || 0;
+                        
+                        if (remainingPlanks > 0) {
+                            const planksNeededForMk15 = mk15Capacity - currentMk15Planks;
+                            const planksToLoad = Math.min(remainingPlanks, planksNeededForMk15);
+                            console.log(`[TY Auto] MK15 cab trunk opened! Loading ${planksToLoad} planks to MK15... (needs ${planksNeededForMk15} more)`);
+                            postCommand("notification", { text: `~g~[TY Auto]~w~ Loading MK15 cab (${planksToLoad} planks)` });
+                            await takePlanks('cab', ACTIONS.DUMP_MK15, planksToLoad);
+                            
+                            console.log("[TY Auto] Waiting for menu to stabilize after MK15 loading...");
+                            await sleep(1000);
+                            
+                            if (cache.menu !== CONFIG.SAWMILL_MENU) {
+                                console.log(`[TY Auto] Not in Sawmill menu after MK15 (currently: ${cache.menu}), attempting to return...`);
+                                if (cache.menu && cache.menu !== CONFIG.SAWMILL_MENU) {
+                                    postCommand("forceMenuBack");
+                                    await sleep(500);
+                                }
+                            }
+                            
+                            postCommand("notification", { text: "~g~[TY Auto]~w~ MK15 cab loaded successfully!" });
+                        } else {
+                            console.log("[TY Auto] Cab trunk opened but no planks remaining");
+                            postCommand("notification", { text: "~o~[TY Auto]~w~ MK15 ready but no planks remaining" });
+                        }
+                    } catch (error) {
+                        console.log(`[TY Auto] MK15 timeout: ${error.message}`);
+                        postCommand("notification", { text: "~o~[TY Auto]~w~ MK15 skipped - cab trunk not opened in time" });
+                    } finally {
+                        isTyAutoWaitingForMk15 = false;
+                    }
+                } else if (hasMk15 && mk15Full) {
+                    console.log("[TY Auto] MK15 cab already full, skipping MK15 loading");
+                    postCommand("notification", { text: "~o~[TY Auto]~w~ MK15 cab already full (460 planks)" });
+                }
+                
+                const newTrailerPlanks = getPlankAmount(trailerStorageKey);
+                const newMk15Planks = hasMk15 ? getPlankAmount(mk15StorageKey) : 0;
+                const totalLoaded = (newTrailerPlanks - currentTrailerPlanks) + (newMk15Planks - currentMk15Planks);
+                
+                if (totalLoaded === 0) {
+                    console.log("[TY Auto] No planks were loaded - vehicles already full");
+                    postCommand("notification", { text: "~o~[TY Auto]~w~ No loading needed - vehicles already have max planks!" });
+                    return;
+                }
+                
+                console.log(`[TY Auto] Successfully loaded ${totalLoaded} planks total`);
+                console.log("[TY Auto] Completing TY Auto process - waiting 5 seconds for user to reopen storage");
+                postCommand("notification", { text: "~g~[TY Auto]~w~ Vehicles loaded! Reopen storage within 5 seconds to continue..." });
+                
+                try {
+                    await waitUntil(() => 
+                        cache.menu === CONFIG.SAWMILL_MENU && 
+                        cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.OPEN_STORAGE)),
+                        100, 50, "Storage menu not reopened within 5 seconds"
+                    );
+                    
+                    const storageContentFinal = getStorageContent(storageKey);
+                    const finalRemainingPlanks = storageContentFinal.refined_planks?.amount || 0;
+                    
+                    if (finalRemainingPlanks > 0) {
+                        console.log(`[TY Auto] Storage reopened! ${finalRemainingPlanks} planks still available for manual loading`);
+                        postCommand("notification", { text: `~b~[TY Auto]~w~ Storage reopened - ${finalRemainingPlanks} planks remaining for manual loading` });
+                    } else {
+                        postCommand("notification", { text: "~g~[TY Auto]~w~ All planks loaded successfully!" });
+                    }
+                } catch (error) {
+                    console.log("[TY Auto] 5-second storage reopen timeout - TY Auto complete");
+                    postCommand("notification", { text: "~y~[TY Auto]~w~ Complete! Reopen storage manually if needed." });
+                }
+
+            } catch (error) {
+                console.error("[TY Auto] Error:", error);
+                postCommand("notification", { text: `~r~[TY Auto]~w~ Error: ${error.message}` });
+            } finally {
+                isProcessing = false;
+                isTyAutoWaitingForMk15 = false;
+                lastActionTimestamp = Date.now() + 2000;
+            }
+        }
+
+        async function handleTyAutoDumpPlanks() {
+             if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
+            isProcessing = true;
+            try {
+                 const userId = cache.user_id;
+                 if (!userId) return;
+
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
+                const trailerPlanks = getPlankAmount(`chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`);
+                const mk15Planks = hasMk15 ? getPlankAmount(`chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`) : 0;
+                let inventoryPlanks = getPlankAmount('inventory');
+
+                if (trailerPlanks > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.MOC_TRAILER)), 100, 10);
+                    await forceMenuChoice(ACTIONS.MOC_TRAILER);
+                    await waitUntil(() => cache.menu === CONFIG.TRAIN_NETWORK_MENU, 100, 10);
+                }
+                if (hasMk15 && getPlankAmount(`chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`) > 0) {
+                    await forceMenuChoice(ACTIONS.DUMP_FROM_TRUNK);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.DUMP_MK15)), 100, 10);
+                    await forceMenuChoice(ACTIONS.DUMP_MK15);
+                     await waitUntil(() => cache.menu === CONFIG.TRAIN_NETWORK_MENU, 100, 10);
+                }
+                inventoryPlanks = getPlankAmount('inventory');
+                if (inventoryPlanks > 0) {
+                    await forceMenuChoice(ACTIONS.OPEN_STORAGE);
+                    await waitUntil(() => cache.menu_choices.some(c => c && c[0] && c[0].includes(ACTIONS.PUT_ALL)), 100, 10);
+                    await forceMenuChoice(ACTIONS.PUT_ALL);
+                }
+            } finally {
+                isProcessing = false;
+                lastActionTimestamp = Date.now();
+            }
+        }
+
         async function handleStorageMenu() {
             if (isProcessing || Date.now() - lastActionTimestamp < CONFIG.DEBOUNCE_DELAY_MS) return;
             
@@ -1101,6 +1406,7 @@
             const factionId = cache.faction_id;
             let currentPlanksInStorage = 0;
             let currentLogsInStorage = 0;
+            let currentPlanksInTy = 0;
             
             if (userId && factionId) {
                 const storageKey = `chest_self_storage:${userId}:faq_${factionId}:chest`;
@@ -1109,7 +1415,13 @@
                 currentLogsInStorage = storageContent.tcargologs?.amount || 0;
             }
             
-            const totalPlanks = totalPlanksProduced + currentPlanksInStorage;
+            if (userId) {
+                const tyStorageKey = `chest_self_storage:${userId}:biz_train:chest`;
+                const tyStorageContent = getStorageContent(tyStorageKey);
+                currentPlanksInTy = tyStorageContent.refined_planks?.amount || 0;
+            }
+            
+            const totalPlanks = totalPlanksProduced + currentPlanksInStorage + currentPlanksInTy;
             const planksStillNeeded = Math.max(0, plankGoal - totalPlanks);
             
             const goalProgressEl = document.getElementById('goal-progress');
@@ -1120,12 +1432,12 @@
             
             const logsNeededEl = document.getElementById('logs-needed');
             if (logsNeededEl) {
-                const totalLogsNeeded = planksStillNeeded * CONFIG.LOGS_PER_PLANK_BATCH;
+                const totalLogsNeeded = planksStillNeeded * CONFIG.LOGS_PER_PLANK;
                 const logsStillNeeded = Math.max(0, totalLogsNeeded - currentLogsInStorage);
                 logsNeededEl.textContent = `(${logsStillNeeded} logs needed)`;
             }
             
-            const totalLogsNeeded = planksStillNeeded * CONFIG.LOGS_PER_PLANK_BATCH;
+            const totalLogsNeeded = planksStillNeeded * CONFIG.LOGS_PER_PLANK;
             const canCraftRemainingPlanks = currentLogsInStorage >= totalLogsNeeded;
             const goalCanBeAchieved = totalPlanks >= plankGoal || (planksStillNeeded > 0 && canCraftRemainingPlanks);
             
@@ -1134,9 +1446,12 @@
                 localStorage.setItem('sawmillGoalMet', 'true');
                 
                 if (totalPlanks >= plankGoal) {
-                    postCommand("oneliner", { text: `🎉 Plank Goal Achieved! ${totalPlanks}/${plankGoal} planks (${currentPlanksInStorage} in storage + ${totalPlanksProduced} produced)!` });
+                    let breakdown = `${totalPlanksProduced} produced`;
+                    if (currentPlanksInStorage > 0) breakdown += ` + ${currentPlanksInStorage} in storage`;
+                    if (currentPlanksInTy > 0) breakdown += ` + ${currentPlanksInTy} in TY`;
+                    postCommand("oneliner", { text: `🎉 Plank Goal Achieved! ${totalPlanks}/${plankGoal} planks (${breakdown})!` });
                 } else {
-                    const planksFromLogs = Math.floor(currentLogsInStorage / CONFIG.LOGS_PER_PLANK_BATCH);
+                    const planksFromLogs = Math.floor(currentLogsInStorage / CONFIG.LOGS_PER_PLANK);
                     postCommand("oneliner", { text: `🎉 Plank Goal Achievable! ${totalPlanks} planks + ${planksFromLogs} craftable = ${totalPlanks + planksFromLogs}/${plankGoal} (${currentLogsInStorage} logs available)!` });
                 }
             }
@@ -1153,9 +1468,11 @@
             } else {
                 const storageKey = `chest_self_storage:${userId}:faq_${factionId}:chest`;
                 const storageContent = getStorageContent(storageKey);
+                const tyStorageKey = `chest_self_storage:${userId}:biz_train:chest`;
+                const tyStorageContent = getStorageContent(tyStorageKey);
                 itemListContainer.innerHTML = '';
                 
-                if (Object.keys(storageContent).length > 0) {
+                if (Object.keys(storageContent).length > 0 || Object.keys(tyStorageContent).length > 0) {
                     let othersAmount = 0;
                     let displayedItems = 0;
                     
@@ -1167,6 +1484,14 @@
                             itemListContainer.appendChild(div);
                             displayedItems++;
                         }
+                    }
+                    
+                    if (tyStorageContent.refined_planks?.amount > 0) {
+                        const div = document.createElement('div');
+                        div.className = 'storage-item';
+                        div.innerHTML = `<span class="storage-item-name"><i class="bi bi-train-front me-1"></i>TY Planks</span><span class="storage-item-amount">${tyStorageContent.refined_planks.amount.toLocaleString()}</span>`;
+                        itemListContainer.appendChild(div);
+                        displayedItems++;
                     }
                     
                     const availableLogs = storageContent.tcargologs?.amount || 0;
@@ -1204,7 +1529,7 @@
             if(storageCardAmount) {
                 inventoryListContainer.innerHTML = `<div class="storage-item"><span class="storage-item-name">Storage Cards</span><span class="storage-item-amount">${storageCardAmount.toLocaleString()}</span></div>`;
             } else {
-                 inventoryListContainer.innerHTML = '<div class="storage-item"><span class="storage-item-name">No Storage Cards</span></div>';
+                inventoryListContainer.innerHTML = '<div class="storage-item"><span class="storage-item-name">No Storage Cards</span></div>';
             }
         }
 
@@ -1278,15 +1603,16 @@
                     console.log(`[TY Auto] Menu choices available: ${menuText}`);
                     console.log("[TY Auto] Sawmill menu detected, attempting to take planks");
                     handleTyAutoTakePlanks();
-                } else if (isPlankAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU && menuText.includes("Open Storage")) {
+                } else if (isPlankAutoEnabled && cache.menu === CONFIG.SAWMILL_MENU && menuText.includes("Open Storage") && !plankAutoStorageOpened) {
                     console.log(`Auto-opening storage for plank automation`);
                     if (!isProcessing) {
                         isProcessing = true;
+                        plankAutoStorageOpened = true;
                         forceMenuChoice(ACTIONS.OPEN_STORAGE).finally(() => {
                             isProcessing = false;
                         });
                     }
-                } else if (cache.menu === CONFIG.SAWMILL_MENU && menuText.includes("Dump from Trunk")) {
+                } else if (cache.menu === CONFIG.SAWMILL_MENU && menuText.includes("Dump from Trunk") && !isPlankAutoEnabled) {
                     handleStorageMenu();
                 } else if (isLogsAutoEnabled && menuText.includes("Collect Logs")) {
                     handleLoggingCamp();
@@ -1296,6 +1622,7 @@
                     handleTyAutoDumpPlanks();
                 } else if (isPlankAutoEnabled && cache.menu === CONFIG.TRUCKING_SAWMILL_MENU && menuText.includes("Mill Planks")) {
                     console.log(`Triggering plank production for menu: ${cache.menu}`);
+                    plankAutoStorageOpened = false;
                     handlePlankProduction();
                 } else if (isPlankAutoEnabled && cache.menu === CONFIG.MILL_PLANKS_MENU && menuText.includes("Mill Planks x5")) {
                     console.log(`Auto-selecting Mill Planks x5`);
@@ -1303,6 +1630,7 @@
                         isProcessing = true;
                         forceMenuChoice(ACTIONS.MILL_PLANKS_X5).finally(() => {
                             isProcessing = false;
+                            plankAutoStorageOpened = false;
                         });
                     }
                 }
@@ -1345,8 +1673,8 @@
             plankAutoToggle.checked = isPlankAutoEnabled;
             
             plankGoal = parseInt(localStorage.getItem('sawmillPlankGoal')) || 0;
-            goalInput.value = plankGoal;
-            const logsNeeded = plankGoal * CONFIG.LOGS_PER_PLANK_BATCH;
+            goalInput.value = formatGoalDisplay(plankGoal);
+            const logsNeeded = plankGoal * CONFIG.LOGS_PER_PLANK;
             document.getElementById('logs-needed').textContent = `(${logsNeeded} logs needed)`;
             
             totalPlanksProduced = parseInt(localStorage.getItem('sawmillTotalPlanksProduced')) || 0;
@@ -1371,4 +1699,3 @@
     </script>
 </body>
 </html>
-
