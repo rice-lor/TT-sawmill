@@ -990,22 +990,7 @@
         function getSawdustAmount(storageKey) { return (getStorageContent(storageKey).tcargodust?.amount) || 0; }
         
         async function handleInventoryFull() {
-            if (isProcessing) return;
-            isProcessing = true;
-            
-            if (fillStep === 'trailer' && cache.cab === CONFIG.MK15_MODEL) {
-                fillStep = 'cab';
-                postCommand("forceMenuBack");
-                await sleep(200);
-                postCommand("sendCommand", { command: "rm_cabtrunk" });
-                await sleep(300);
-            } else {
-                fillStep = 'inventory';
-                postCommand("sendCommand", { command: "vrp-reopen" });
-                await sleep(500);
-            }
-            
-            isProcessing = false;
+            // This function is no longer needed for the stateless log collection logic
         }
 
         async function handleLoggingCamp() {
@@ -1014,30 +999,25 @@
 
             try {
                 const userId = cache.user_id;
+                if (!userId) return;
+
+                const hasMk15 = cache.cab === CONFIG.MK15_MODEL;
                 const inventoryLogAmount = getLogAmount('inventory');
-                
-                if (fillStep === 'inventory') {
-                    if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
-                        await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
-                    }
-                } else if (fillStep === 'cab') {
-                    const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
-                    const currentCabLogs = getLogAmount(mk15StorageKey);
-                    
-                    if (currentCabLogs < CONFIG.VEHICLE_LOG_CAPACITY) {
-                        await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
-                        await sleep(500);
-                        postCommand("sendCommand", { command: "rm_cabtrunk" });
-                    }
-                } else {
-                    const vehicleStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
-                    const currentTrailerLogs = getLogAmount(vehicleStorageKey);
-                    
-                    if (currentTrailerLogs < CONFIG.VEHICLE_LOG_CAPACITY) {
-                        await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
-                        await sleep(500);
-                        postCommand("sendCommand", { command: "rm_trunk" });
-                    }
+                const trailerStorageKey = `chest_u${userId}veh_trailer_${CONFIG.MAIN_TRAILER_MODEL}`;
+                const trailerLogAmount = getLogAmount(trailerStorageKey);
+                const mk15StorageKey = `chest_u${userId}veh_cab_${CONFIG.MK15_MODEL}`;
+                const mk15LogAmount = hasMk15 ? getLogAmount(mk15StorageKey) : 0;
+
+                if (inventoryLogAmount < CONFIG.INVENTORY_LOG_CAPACITY) {
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_5);
+                } else if (trailerLogAmount < CONFIG.VEHICLE_LOG_CAPACITY) {
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(200);
+                    postCommand("sendCommand", { command: "rm_trunk" });
+                } else if (hasMk15 && mk15LogAmount < CONFIG.VEHICLE_LOG_CAPACITY) {
+                    await forceMenuChoice(ACTIONS.COLLECT_LOGS_10);
+                    await sleep(200);
+                    postCommand("sendCommand", { command: "rm_cabtrunk" });
                 }
             } finally {
                 isProcessing = false;
@@ -1184,8 +1164,6 @@
                     postCommand("oneliner", { text: `🎉 Plank Goal Achievable! ${totalPlanks} planks + ${planksFromLogs} craftable = ${totalPlanks + planksFromLogs}/${plankGoal} (${currentLogsInStorage} logs available)!` });
                 }
             }
-            
-            if(fillStep !== 'trailer') fillStep = 'trailer';
         }
 
         function updateStorageDisplay() {
